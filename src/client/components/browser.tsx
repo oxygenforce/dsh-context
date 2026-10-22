@@ -21,7 +21,6 @@ import type { StackedBarProps } from './stackedBar'
 import type { AttachmentOpener, ImageLoader } from '../services'
 import { TextSection, schemaTextOf, RowToolbar, ToolSchema, toolErrOf } from './browserToolCard'
 import { revealRowInCard } from '../revealScroll'
-import { wheelToPage } from '../wheelPass'
 import { NodeContent, byCatOf, nodeNameOf, msgKindsOf, reasoningTextOf, ROW_KINDS } from './browserNodes'
 import type { RowKind } from './browserNodes'
 import { DNA_MIN_BAND, countOf, lastOfTurn, stepStampOf } from './browserHelpers'
@@ -147,20 +146,26 @@ export function makeContextBrowser(
     }, [pinSeq, onOpenCat])
     const rootRef = useRef<HTMLDivElement | null>(null)
     const scrollRef = useRef<HTMLDivElement | null>(null)
-    // The rows region's `overscroll-behavior: contain` (styles/browser.css) swallows a wheel it cannot use —
-    // nothing to scroll, or the end it would go — so the page under the card would freeze; hand those to it.
-    useEffect(() => {
+    // `overscroll-behavior: contain` (styles/browser.css) also fences off a region with NOTHING to scroll: Chromium
+    // applies the boundary without a scroll range and swallows the wheel, freezing the page under the card. Toggle
+    // the containment to `auto` while the rows fit, so that wheel chains to the page natively — a wheel listener
+    // here would cost the rows their compositor scrolling, and only the native chain keeps it smooth.
+    const fitRows = (): void => {
       const el = scrollRef.current
       /* v8 ignore next -- the card always mounts its rows region. */
       if (el === null) return
-      const onWheel = (e: WheelEvent): void => {
-        // Ctrl+wheel is the page-zoom gesture, never a scroll: cancelling it would disable zoom over the card.
-        if (e.ctrlKey) return
-        const px = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * el.clientHeight : e.deltaY
-        if (wheelToPage(el, px)) e.preventDefault()
-      }
-      el.addEventListener('wheel', onWheel, { passive: false })
-      return () => { el.removeEventListener('wheel', onWheel) }
+      el.style.overscrollBehavior = el.scrollHeight - el.clientHeight > 2 ? 'contain' : 'auto'
+    }
+    // Measured after paint: a render-phase layout read would stall every hover on the card.
+    useEffect(fitRows)
+    useEffect(() => {
+      const el = scrollRef.current
+      if (el === null || typeof ResizeObserver !== 'function') return
+      /* v8 ignore start -- jsdom has no layout/ResizeObserver: the effect above measures every render. */
+      const observer = new ResizeObserver(fitRows)
+      observer.observe(el)
+      return () => { observer.disconnect() }
+      /* v8 ignore stop */
     }, [])
     const flatIndexRef = useRef<Map<string, number>>(new Map())
     // The DNA flat feed can carry thousands of sub-row-sized items; the rows region is a fixed-pitch scroller, so
